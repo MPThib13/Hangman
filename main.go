@@ -14,70 +14,105 @@ func clearTerminal() {
 	fmt.Print("\033[H\033[2J")
 }
 
-func drawHangman(errors int) {
-	stages := []string{
-		`
-		______
-		|    |
-		|    
-		|   
-		|    
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|   
-		|    
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|    |
-		|    
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|   /|
-		|    
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|   /|\
-		|    
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|   /|\
-		|   / 
-		|___
-		`,
-		`
-		______
-		|    |
-		|    O
-		|   /|\
-		|   / \
-		|___
-		`,
+func loadHangmanDrawings(fileName string) ([]string, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return nil, err
 	}
-	fmt.Println(stages[errors])
+	defer file.Close()
+
+	var drawings []string
+	scanner := bufio.NewScanner(file)
+	var currentDrawing strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if currentDrawing.Len() > 0 {
+				drawings = append(drawings, currentDrawing.String())
+				currentDrawing.Reset()
+			}
+		} else {
+			currentDrawing.WriteString(line + "\n")
+		}
+	}
+
+	if currentDrawing.Len() > 0 {
+		drawings = append(drawings, currentDrawing.String())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return drawings, nil
+}
+
+func drawHangman(errors int, drawings []string) {
+	if errors < len(drawings) {
+		fmt.Println(drawings[errors])
+	}
+}
+
+func listTextFiles() ([]string, error) {
+	dir, err := os.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+
+	files, err := dir.Readdirnames(0)
+	if err != nil {
+		return nil, err
+	}
+
+	var textFiles []string
+	for _, file := range files {
+		if strings.HasSuffix(file, ".txt") && file != "hangman-drawing.txt" {
+			textFiles = append(textFiles, file)
+		}
+	}
+
+	return textFiles, nil
+}
+
+func chooseFile(files []string) string {
+	if len(files) == 1 {
+		fmt.Printf("Un seul fichier trouvé : %s. Utilisation de ce fichier.\n", files[0])
+		return files[0]
+	}
+
+	fmt.Println("Fichiers disponibles :")
+	for index, file := range files {
+		fmt.Printf("%d. %s\n", index+1, file)
+	}
+
+	var choice int
+	for {
+		fmt.Print("Choisissez le numéro du fichier à utiliser : ")
+		_, err := fmt.Scanf("%d", &choice)
+		if err == nil && choice > 0 && choice <= len(files) {
+			break
+		}
+		fmt.Println("Numéro invalide, veuillez réessayer.")
+	}
+
+	return files[choice-1]
 }
 
 func main() {
-	file, err := os.Open("hangman.txt")
+	hangmanDrawings, err := loadHangmanDrawings("hangman-drawing.txt")
+	if err != nil {
+		log.Fatalf("Erreur lors du chargement des dessins du pendu : %v", err)
+	}
+
+	files, err := listTextFiles()
+	if err != nil || len(files) == 0 {
+		log.Fatalf("Aucun fichier .txt trouvé dans le répertoire courant ou erreur lors de la lecture : %v", err)
+	}
+
+	selectedFile := chooseFile(files)
+
+	file, err := os.Open(selectedFile)
 	if err != nil {
 		log.Fatalf("Impossible d'ouvrir le fichier : %v", err)
 	}
@@ -118,10 +153,12 @@ func main() {
 
 	maxErrors := 6
 	currentErrors := 0
+	usedLetters := make(map[rune]bool)
 
 	clearTerminal()
-	drawHangman(currentErrors)
+	drawHangman(currentErrors, hangmanDrawings)
 	fmt.Printf("Mot à deviner : %s\n", string(hiddenWord))
+	fmt.Println("Lettres déjà utilisées : Aucun")
 
 	reader := bufio.NewReader(os.Stdin)
 	guessed := false
@@ -132,13 +169,23 @@ func main() {
 		input = strings.TrimSpace(input)
 		input = strings.ToLower(input)
 
+		if len(input) == 1 {
+			letter := rune(input[0])
+			if usedLetters[letter] {
+				fmt.Printf("Vous avez déjà utilisé la lettre '%c'. Essayez une autre.\n", letter)
+				continue
+			} else {
+				usedLetters[letter] = true
+			}
+		}
+
 		actionPerformed := false
 
 		if len(input) == len(selectedWord) {
 			if input == strings.ToLower(selectedWord) {
 				guessed = true
 				clearTerminal()
-				drawHangman(currentErrors)
+				drawHangman(currentErrors, hangmanDrawings)
 				fmt.Printf("Félicitations ! Vous avez trouvé le mot : %s\n", selectedWord)
 				break
 			} else {
@@ -168,7 +215,7 @@ func main() {
 			actionPerformed = true
 
 			if actionPerformed {
-				drawHangman(currentErrors)
+				drawHangman(currentErrors, hangmanDrawings)
 				fmt.Printf("Mot à deviner : %s\n", string(hiddenWord))
 			}
 		} else {
@@ -185,17 +232,22 @@ func main() {
 
 		if guessed {
 			clearTerminal()
-			drawHangman(currentErrors)
+			drawHangman(currentErrors, hangmanDrawings)
 			fmt.Printf("Félicitations ! Vous avez deviné le mot : %s\n", selectedWord)
 		}
 
 		if currentErrors >= maxErrors {
 			clearTerminal()
-			drawHangman(currentErrors)
+			drawHangman(currentErrors, hangmanDrawings)
 			fmt.Printf("Vous avez perdu ! Le mot était : %s\n", selectedWord)
 			break
 		} else {
 			fmt.Printf("Erreurs restantes : %d\n", maxErrors-currentErrors)
+			fmt.Printf("Lettres déjà utilisées : ")
+			for letter := range usedLetters {
+				fmt.Printf("%c ", letter)
+			}
+			fmt.Println()
 		}
 	}
 }
